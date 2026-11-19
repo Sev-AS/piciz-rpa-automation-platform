@@ -1,0 +1,119 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: piciz-postgres
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-piciz_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_env}
+      POSTGRES_DB: ${POSTGRES_DB:-n8n_db}
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - piciz_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-piciz_admin} -d ${POSTGRES_DB:-n8n_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: piciz-n8n
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:5678:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-n8n_db}
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-piciz_admin}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_env}
+      N8N_HOST: ${N8N_HOST:-localhost}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-America/Bogota}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - piciz_net
+
+  rpa-api:
+    build:
+      context: ./services/rpa-api
+      dockerfile: Dockerfile
+    container_name: piciz-rpa-api
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "${BIND_HOST:-127.0.0.1}:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      API_KEY: ${API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      DB_HOST: ${RPA_DB_HOST:-postgres}
+      DB_PORT: ${RPA_DB_PORT:-5432}
+      DB_USER: ${POSTGRES_USER:-piciz_admin}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_env}
+      DB_NAME: ${RPA_DB_NAME:-gestion_usuarios}
+      PICIZ_URL: ${PICIZ_URL:-https://picizweb31.grupozfb.com/picizweb/#/home}
+      PICIZ_ZONA_FRANCA: ${PICIZ_ZONA_FRANCA:-Zona Franca Permanente Santander}
+      PICIZ_COMPANY: ${PICIZ_COMPANY:-CAMPUSLANDS S.A.S. BIC}
+      PICIZ_USER: ${PICIZ_USER:-}
+      PICIZ_PASSWORD: ${PICIZ_PASSWORD:-}
+      PICIZ_PERSONA_VISITA: ${PICIZ_PERSONA_VISITA:-Campuslands}
+      RPA_DRY_RUN: ${RPA_DRY_RUN:-true}
+      RPA_HEADLESS: ${RPA_HEADLESS:-true}
+      RPA_TIMEOUT_SECONDS: ${RPA_TIMEOUT_SECONDS:-120}
+    volumes:
+      - rpa_results:/app/results
+    networks:
+      - piciz_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: piciz-ngrok
+    profiles:
+      - tunnel
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - n8n
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    command:
+      - "http"
+      - "n8n:5678"
+      - "--url=${NGROK_DOMAIN:-}"
+    networks:
+      - piciz_net
+
+networks:
+  piciz_net:
+    driver: bridge
+
+volumes:
+  n8n_data:
+  postgres_data:
+  rpa_results:
